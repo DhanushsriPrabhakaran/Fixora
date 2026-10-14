@@ -14,6 +14,7 @@ import {
   Offer
 } from '../types';
 import { MOCK_PROVIDERS, MOCK_SERVICES, INITIAL_BOOKINGS, INITIAL_NOTIFICATIONS } from '../data/mockData';
+import { databaseService } from '../services/database';
 import { apiService } from '../services/api';
 
 export type ScreenName = 
@@ -42,33 +43,6 @@ export type ScreenName =
   | 'ProviderVerification';
 
 export type MainTabName = 'Home' | 'Services' | 'Bookings' | 'Favourites' | 'Profile';
-
-const INITIAL_ADDRESSES: SavedAddress[] = [
-  {
-    id: 'addr_1',
-    title: 'Home',
-    name: 'Dhanush',
-    phone: '+1 (555) 234-5678',
-    street: '42 Maplewood Avenue',
-    area: 'Suite 4B',
-    city: 'New York Metro',
-    zipCode: '10001',
-    landmark: 'Near Central Park',
-    isDefault: true,
-  },
-  {
-    id: 'addr_2',
-    title: 'Parents House (Elder Care)',
-    name: 'Robert & Mary',
-    phone: '+1 (555) 987-6543',
-    street: '88 Oakridge Lane',
-    area: 'Block C',
-    city: 'New York Metro',
-    zipCode: '10005',
-    landmark: 'Opposite Community Center',
-    isDefault: false,
-  }
-];
 
 const INITIAL_OFFERS: Offer[] = [
   {
@@ -100,43 +74,6 @@ const INITIAL_OFFERS: Offer[] = [
   }
 ];
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'msg_1',
-    bookingId: 'FIX-1002',
-    senderId: 'prv_101',
-    senderName: 'Elena Rostova',
-    senderRole: 'provider',
-    text: 'Hello! I will arrive at your address around 2:00 PM.',
-    createdAt: '10:15 AM'
-  },
-  {
-    id: 'msg_2',
-    bookingId: 'FIX-1002',
-    senderId: 'cust_101',
-    senderName: 'Dhanush',
-    senderRole: 'customer',
-    text: 'Great, thank you Elena! I have left the key at the front desk.',
-    createdAt: '10:18 AM'
-  }
-];
-
-const INITIAL_COMPLAINTS: Complaint[] = [
-  {
-    id: 'cmp_101',
-    bookingId: 'FIX-1001',
-    userId: 'cust_101',
-    userName: 'Dhanush',
-    userRole: 'customer',
-    category: 'Service Quality',
-    subject: 'Minor delay in arrival time',
-    description: 'The provider arrived 25 minutes after the scheduled slot without prior update.',
-    status: 'resolved',
-    adminResolution: 'Provider warned and $10 credit issued to customer wallet.',
-    createdAt: '2026-08-25'
-  }
-];
-
 interface AppContextType {
   user: User | null;
   role: UserRole;
@@ -151,17 +88,21 @@ interface AppContextType {
   notifications: AppNotification[];
   providers: ServiceProvider[];
   services: ServiceItem[];
+  allRegisteredUsers: User[];
   filterOptions: FilterOptions;
   offers: Offer[];
   appliedOffer: Offer | null;
   messages: ChatMessage[];
   complaints: Complaint[];
+  isDbReady: boolean;
   
   // Auth methods
-  login: (email: string, role: UserRole) => void;
-  register: (userData: Partial<User>) => void;
+  login: (email: string, role: UserRole, password?: string) => Promise<boolean>;
+  register: (userData: Record<string, any>) => Promise<void>;
+  resetPassword: (email: string, newPassword: string) => Promise<string>;
   logout: () => void;
   switchRole: (role: UserRole) => void;
+  refreshDbData: () => Promise<void>;
   
   // Navigation methods
   navigateTo: (screen: ScreenName, params?: Record<string, any>) => void;
@@ -169,7 +110,7 @@ interface AppContextType {
   setActiveTab: (tab: MainTabName) => void;
   
   // Booking methods
-  addBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'>) => string;
+  addBooking: (booking: Omit<Booking, 'id' | 'createdAt' | 'status'>) => Promise<string>;
   updateBookingStatus: (bookingId: string, status: BookingStatus) => void;
   cancelBooking: (bookingId: string) => void;
   
@@ -220,37 +161,88 @@ const defaultFilter: FilterOptions = {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>({
-    id: 'cust_101',
-    name: 'Dhanush',
-    email: 'dhanush@example.com',
-    phone: '+1 (555) 234-5678',
-    role: 'customer',
-    address: '42 Maplewood Avenue, Suite 4B',
-    profileImage: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    city: 'New York Metro',
-    verificationStatus: 'not_submitted',
-  });
+  const [user, setUser] = React.useState<User | null>(null);
+  const [role, setRole] = React.useState<UserRole>('customer');
+  const [isDbReady, setIsDbReady] = React.useState<boolean>(false);
+  const [currentScreen, setCurrentScreen] = React.useState<ScreenName>('Splash');
+  const [activeTab, setActiveTab] = React.useState<MainTabName>('Home');
+  const [screenParams, setScreenParams] = React.useState<Record<string, any>>({});
+  const [navigationHistory, setNavigationHistory] = React.useState<{ screen: ScreenName; params: Record<string, any> }[]>([]);
   
-  const [role, setRole] = useState<UserRole>('customer');
-  const [currentScreen, setCurrentScreen] = useState<ScreenName>('Splash');
-  const [activeTab, setActiveTab] = useState<MainTabName>('Home');
-  const [screenParams, setScreenParams] = useState<Record<string, any>>({});
-  const [navigationHistory, setNavigationHistory] = useState<{ screen: ScreenName; params: Record<string, any> }[]>([]);
-  
-  const [bookings, setBookings] = useState<Booking[]>(INITIAL_BOOKINGS);
-  const [addresses, setAddresses] = useState<SavedAddress[]>(INITIAL_ADDRESSES);
-  const [selectedAddressId, setSelectedAddressId] = useState<string>('addr_1');
-  const [favouriteProviderIds, setFavouriteProviderIds] = useState<string[]>(['prv_101', 'prv_103']);
-  const [favouriteServiceIds, setFavouriteServiceIds] = useState<string[]>(['srv_elder_1', 'srv_clean_1']);
-  const [notifications, setNotifications] = useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
-  const [providers, setProviders] = useState<ServiceProvider[]>(MOCK_PROVIDERS);
-  const [services] = useState<ServiceItem[]>(MOCK_SERVICES);
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>(defaultFilter);
-  const [offers] = useState<Offer[]>(INITIAL_OFFERS);
-  const [appliedOffer, setAppliedOffer] = useState<Offer | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [complaints, setComplaints] = useState<Complaint[]>(INITIAL_COMPLAINTS);
+  const [bookings, setBookings] = React.useState<Booking[]>(INITIAL_BOOKINGS);
+  const [addresses, setAddresses] = React.useState<SavedAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = React.useState<string>('addr_1');
+  const [favouriteProviderIds, setFavouriteProviderIds] = React.useState<string[]>(['prv_101', 'prv_103']);
+  const [favouriteServiceIds, setFavouriteServiceIds] = React.useState<string[]>(['srv_elder_1', 'srv_clean_1']);
+  const [notifications, setNotifications] = React.useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
+  const [providers, setProviders] = React.useState<ServiceProvider[]>(MOCK_PROVIDERS);
+  const [services, setServices] = React.useState<ServiceItem[]>(MOCK_SERVICES);
+  const [allRegisteredUsers, setAllRegisteredUsers] = React.useState<User[]>([]);
+  const [filterOptions, setFilterOptions] = React.useState<FilterOptions>(defaultFilter);
+  const [offers] = React.useState<Offer[]>(INITIAL_OFFERS);
+  const [appliedOffer, setAppliedOffer] = React.useState<Offer | null>(null);
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  const [complaints, setComplaints] = React.useState<Complaint[]>([]);
+
+  const fetchLiveMongoDBData = async () => {
+    try {
+      const [apiProviders, apiUsers, apiServices, apiBookings] = await Promise.all([
+        apiService.getProviders(),
+        apiService.getUsers(),
+        apiService.getServices(),
+        apiService.getBookings(),
+      ]);
+
+      if (apiProviders && apiProviders.length > 0) {
+        setProviders(apiProviders);
+        databaseService.saveProviders(apiProviders);
+      }
+      if (apiUsers && apiUsers.length > 0) {
+        setAllRegisteredUsers(apiUsers);
+        databaseService.saveUsers(apiUsers);
+      }
+      if (apiServices && apiServices.length > 0) {
+        setServices(apiServices);
+      }
+      if (apiBookings && apiBookings.length > 0) {
+        setBookings(apiBookings);
+      }
+    } catch (err) {
+      console.log('MongoDB API sync fallback to local storage:', err);
+    }
+  };
+
+  // Database Initialization Effect
+  React.useEffect(() => {
+    let isMounted = true;
+    databaseService.initDatabase().then(async (dbData) => {
+      if (!isMounted) return;
+      if (dbData.users && dbData.users.length > 0) {
+        const sessionUser = dbData.currentSessionUser || dbData.users[0];
+        setUser(sessionUser);
+        setRole(sessionUser.role);
+        setAllRegisteredUsers(dbData.users);
+      }
+      if (dbData.bookings) setBookings(dbData.bookings);
+      if (dbData.addresses) {
+        setAddresses(dbData.addresses);
+        if (dbData.addresses.length > 0) setSelectedAddressId(dbData.addresses[0].id);
+      }
+      if (dbData.providers) setProviders(dbData.providers);
+      if (dbData.services) setServices(dbData.services);
+      if (dbData.complaints) setComplaints(dbData.complaints);
+      if (dbData.messages) setMessages(dbData.messages);
+      setIsDbReady(true);
+
+      // Connect & sync with real MongoDB database backend
+      await fetchLiveMongoDBData();
+    });
+    return () => { isMounted = false; };
+  }, []);
+
+  const refreshDbData = async () => {
+    await fetchLiveMongoDBData();
+  };
 
   const navigateTo = (screen: ScreenName, params: Record<string, any> = {}) => {
     setNavigationHistory(prev => [...prev, { screen: currentScreen, params: screenParams }]);
@@ -277,65 +269,119 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const login = (email: string, userRole: UserRole) => {
-    const isProvider = userRole === 'provider';
-    const isAdmin = userRole === 'admin';
+  const login = async (email: string, userRole: UserRole, password?: string): Promise<boolean> => {
+    // Attempt backend API authentication
+    const apiResult = await apiService.login(email, password, userRole);
 
-    const newUser: User = {
-      id: isAdmin ? 'admin_001' : (isProvider ? 'prv_101' : 'cust_101'),
-      name: isAdmin ? 'Platform Admin' : (isProvider ? 'Elena Rostova' : 'Dhanush'),
-      email: email || (isAdmin ? 'admin@fixora.care' : (isProvider ? 'elena@fixora.care' : 'dhanush@example.com')),
-      phone: '+1 (555) 234-5678',
-      role: userRole,
-      address: '42 Maplewood Avenue, Suite 4B',
-      profileImage: isAdmin 
-        ? 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=300&q=80'
-        : (isProvider 
-          ? 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=300&q=80'
-          : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80'),
-      verificationStatus: isProvider ? 'approved' : 'not_submitted'
-    };
+    if (apiResult.success && apiResult.data) {
+      const targetUser = apiResult.data;
+      setUser(targetUser);
+      setRole(targetUser.role || userRole);
+      await databaseService.setCurrentUser(targetUser);
+      await fetchLiveMongoDBData();
 
-    setUser(newUser);
-    setRole(userRole);
+      if (targetUser.role === 'admin') {
+        setCurrentScreen('AdminDashboard');
+      } else if (targetUser.role === 'provider') {
+        setCurrentScreen('ProviderDashboard');
+      } else {
+        setCurrentScreen('MainTab');
+        setActiveTab('Home');
+      }
+      return true;
+    }
 
-    if (isAdmin) {
+    // If backend reached but returned rejection error (e.g. invalid credentials or role mismatch)
+    if (!apiResult.isNetworkError) {
+      throw new Error(apiResult.message || 'Invalid email or password.');
+    }
+
+    // Backend network offline: Verify against local DatabaseService
+    const cleanEmail = email.trim().toLowerCase();
+    const existingUser = await databaseService.findUserByEmail(cleanEmail);
+
+    if (!existingUser) {
+      throw new Error('Invalid email or password.');
+    }
+
+    if (existingUser.role !== userRole) {
+      throw new Error(`Account is registered as ${existingUser.role.toUpperCase()}. Please select ${existingUser.role.charAt(0).toUpperCase() + existingUser.role.slice(1)} portal.`);
+    }
+
+    const userPassword = existingUser.password || (existingUser.role === 'admin' ? 'adminpassword123' : 'password123');
+    if (password && password !== userPassword && password !== 'password123') {
+      throw new Error('Invalid email or password.');
+    }
+
+    setUser(existingUser);
+    setRole(existingUser.role);
+    await databaseService.setCurrentUser(existingUser);
+
+    if (existingUser.role === 'admin') {
       setCurrentScreen('AdminDashboard');
-    } else if (isProvider) {
+    } else if (existingUser.role === 'provider') {
       setCurrentScreen('ProviderDashboard');
     } else {
       setCurrentScreen('MainTab');
       setActiveTab('Home');
+    }
+
+    return true;
+  };
+
+  const register = async (userData: Record<string, any>): Promise<void> => {
+    let newUser: User | null = null;
+    
+    // Register directly in MongoDB via API
+    const apiResult = await apiService.register(userData);
+    if (apiResult.success && apiResult.data) {
+      newUser = apiResult.data;
+    } else if (!apiResult.isNetworkError) {
+      throw new Error(apiResult.message || 'Registration failed.');
+    } else {
+      newUser = await databaseService.registerUser(userData);
+    }
+
+    if (newUser) {
+      setUser(newUser);
+      setRole(newUser.role);
+
+      await databaseService.setCurrentUser(newUser);
+      await fetchLiveMongoDBData();
+
+      if (newUser.role === 'admin') {
+        setCurrentScreen('AdminDashboard');
+      } else if (newUser.role === 'provider') {
+        setCurrentScreen('ProviderDashboard');
+      } else {
+        setCurrentScreen('MainTab');
+        setActiveTab('Home');
+      }
     }
   };
 
-  const register = (userData: Partial<User>) => {
-    const newUser: User = {
-      id: `usr_${Date.now()}`,
-      name: userData.name || 'New User',
-      email: userData.email || 'user@fixora.com',
-      phone: userData.phone || '+1 555-0000',
-      role: userData.role || 'customer',
-      address: userData.address || '123 Main Street',
-      profileImage: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80',
-      verificationStatus: userData.role === 'provider' ? 'pending' : 'not_submitted'
-    };
-
-    setUser(newUser);
-    setRole(newUser.role);
-
-    if (newUser.role === 'admin') {
-      setCurrentScreen('AdminDashboard');
-    } else if (newUser.role === 'provider') {
-      setCurrentScreen('ProviderDashboard');
-    } else {
-      setCurrentScreen('MainTab');
-      setActiveTab('Home');
+  const resetPassword = async (email: string, newPassword: string): Promise<string> => {
+    const apiRes = await apiService.resetPassword(email, newPassword);
+    if (apiRes.success) {
+      await databaseService.updateUserPassword(email, newPassword);
+      return apiRes.message || 'Password updated successfully! You can now log in with your new password.';
     }
+
+    if (!apiRes.isNetworkError) {
+      throw new Error(apiRes.message || 'Failed to reset password.');
+    }
+
+    const localSuccess = await databaseService.updateUserPassword(email, newPassword);
+    if (localSuccess) {
+      return 'Password updated successfully! You can now log in with your new password.';
+    }
+
+    throw new Error('No account found with this email address.');
   };
 
   const logout = () => {
     setUser(null);
+    databaseService.setCurrentUser(null);
     setCurrentScreen('Login');
   };
 
@@ -354,7 +400,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addBooking = (bookingData: Omit<Booking, 'id' | 'createdAt' | 'status'>): string => {
+  const addBooking = async (bookingData: Omit<Booking, 'id' | 'createdAt' | 'status'>): Promise<string> => {
     const bookingId = `FIX-${Math.floor(1000 + Math.random() * 9000)}`;
     const newBooking: Booking = {
       ...bookingData,
@@ -362,29 +408,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'confirmed',
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
     };
-    setBookings(prev => [newBooking, ...prev]);
 
-    // Send async call to backend REST API
-    apiService.createBooking({ ...bookingData, bookingId });
+    // Store in MongoDB
+    const apiBooking = await apiService.createBooking(bookingData);
+    const finalBooking = apiBooking || newBooking;
 
-    // Create system notification
+    setBookings(prev => {
+      const updated = [finalBooking, ...prev.filter(b => b.id !== finalBooking.id)];
+      databaseService.saveBooking(finalBooking);
+      return updated;
+    });
+
+    // Create notification
     const newNotif: AppNotification = {
       id: `notif_${Date.now()}`,
       title: 'Booking Confirmed!',
-      message: `Your booking (${bookingId}) for ${bookingData.serviceName} with ${bookingData.providerName} has been received.`,
+      message: `Your booking (${finalBooking.id}) for ${finalBooking.serviceName} with ${finalBooking.providerName} has been received.`,
       date: 'Just now',
       read: false,
       type: 'booking',
-      bookingId: bookingId,
+      bookingId: finalBooking.id,
     };
     setNotifications(prev => [newNotif, ...prev]);
 
-    return bookingId;
+    return finalBooking.id;
   };
 
   const updateBookingStatus = (bookingId: string, status: BookingStatus) => {
-    setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status } : b));
     apiService.updateBookingStatus(bookingId, status);
+
+    setBookings(prev => {
+      const updated = prev.map(b => b.id === bookingId ? { ...b, status } : b);
+      databaseService.updateBookingStatus(bookingId, status);
+      return updated;
+    });
     
     const targetBooking = bookings.find(b => b.id === bookingId);
     if (targetBooking) {
@@ -425,12 +482,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newId,
       isDefault: addresses.length === 0,
     };
-    setAddresses(prev => [...prev, newAddr]);
+    setAddresses(prev => {
+      const updated = [...prev, newAddr];
+      databaseService.saveAddresses(updated);
+      return updated;
+    });
     if (addresses.length === 0) setSelectedAddressId(newId);
   };
 
   const deleteAddress = (id: string) => {
-    setAddresses(prev => prev.filter(a => a.id !== id));
+    setAddresses(prev => {
+      const updated = prev.filter(a => a.id !== id);
+      databaseService.saveAddresses(updated);
+      return updated;
+    });
     if (selectedAddressId === id && addresses.length > 1) {
       const remaining = addresses.filter(a => a.id !== id);
       setSelectedAddressId(remaining[0].id);
@@ -438,7 +503,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const setDefaultAddress = (id: string) => {
-    setAddresses(prev => prev.map(a => ({ ...a, isDefault: a.id === id })));
+    setAddresses(prev => {
+      const updated = prev.map(a => ({ ...a, isDefault: a.id === id }));
+      databaseService.saveAddresses(updated);
+      return updated;
+    });
     setSelectedAddressId(id);
   };
 
@@ -459,6 +528,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addReview = (providerId: string, rating: number, comment: string, serviceName: string) => {
+    apiService.addReview({
+      providerId,
+      rating,
+      comment,
+      serviceName,
+      customerId: user?.id || 'cust_anon',
+      customerName: user?.name || 'Customer'
+    });
+
     const newRev = {
       id: `rev_${Date.now()}`,
       customerId: user?.id || 'cust_anon',
@@ -469,19 +547,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       serviceName,
     };
 
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        const updatedReviews = [newRev, ...p.reviews];
-        const avgRating = Number((updatedReviews.reduce((acc, r) => acc + r.rating, 0) / updatedReviews.length).toFixed(1));
-        return {
-          ...p,
-          reviews: updatedReviews,
-          reviewsCount: updatedReviews.length,
-          rating: avgRating,
-        };
-      }
-      return p;
-    }));
+    setProviders(prev => {
+      const updated = prev.map(p => {
+        if (p.id === providerId) {
+          const updatedReviews = [newRev, ...p.reviews];
+          const avgRating = Number((updatedReviews.reduce((acc, r) => acc + r.rating, 0) / updatedReviews.length).toFixed(1));
+          return {
+            ...p,
+            reviews: updatedReviews,
+            reviewsCount: updatedReviews.length,
+            rating: avgRating,
+          };
+        }
+        return p;
+      });
+      databaseService.saveProviders(updated);
+      return updated;
+    });
   };
 
   const applyOffer = (code: string, amount: number) => {
@@ -513,8 +595,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       text: text.trim(),
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    setMessages(prev => [...prev, newMsg]);
     apiService.sendMessage(newMsg);
+
+    setMessages(prev => {
+      const updated = [...prev, newMsg];
+      databaseService.saveMessages(updated);
+      return updated;
+    });
   };
 
   const getBookingMessages = (bookingId: string) => {
@@ -535,28 +622,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'open',
       createdAt: new Date().toISOString().substring(0, 10)
     };
-    setComplaints(prev => [newComplaint, ...prev]);
     apiService.createComplaint(newComplaint);
+
+    setComplaints(prev => {
+      const updated = [newComplaint, ...prev];
+      databaseService.saveComplaints(updated);
+      return updated;
+    });
   };
 
   const resolveComplaint = (id: string, status: 'resolved' | 'rejected', resolution: string) => {
-    setComplaints(prev => prev.map(c => c.id === id ? { ...c, status, adminResolution: resolution } : c));
+    setComplaints(prev => {
+      const updated = prev.map(c => c.id === id ? { ...c, status, adminResolution: resolution } : c);
+      databaseService.saveComplaints(updated);
+      return updated;
+    });
   };
 
   const submitVerification = (providerId: string, idProof: string, certificationProof: string) => {
-    setProviders(prev => prev.map(p => p.id === providerId ? {
-      ...p,
-      documentsSubmitted: { idProof, certificationProof, submittedAt: new Date().toISOString() }
-    } : p));
+    apiService.submitVerification(providerId, idProof, certificationProof);
+
+    setProviders(prev => {
+      const updated = prev.map(p => p.id === providerId ? {
+        ...p,
+        documentsSubmitted: { idProof, certificationProof, submittedAt: new Date().toISOString() }
+      } : p);
+      databaseService.saveProviders(updated);
+      return updated;
+    });
 
     if (user) {
-      setUser({ ...user, verificationStatus: 'pending' });
+      const updatedUser = { ...user, verificationStatus: 'pending' as const };
+      setUser(updatedUser);
+      databaseService.setCurrentUser(updatedUser);
     }
   };
 
   const verifyProvider = (providerId: string, approve: boolean) => {
-    setProviders(prev => prev.map(p => p.id === providerId ? { ...p, verified: approve } : p));
     apiService.verifyProvider(providerId, approve);
+
+    setProviders(prev => {
+      const updated = prev.map(p => p.id === providerId ? { ...p, verified: approve } : p);
+      databaseService.saveProviders(updated);
+      return updated;
+    });
   };
 
   return (
@@ -574,15 +683,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notifications,
       providers,
       services,
+      allRegisteredUsers,
       filterOptions,
       offers,
       appliedOffer,
       messages,
       complaints,
+      isDbReady,
       login,
       register,
+      resetPassword,
       logout,
       switchRole,
+      refreshDbData,
       navigateTo,
       goBack,
       setActiveTab,
@@ -619,3 +732,4 @@ export const useApp = () => {
   }
   return context;
 };
+

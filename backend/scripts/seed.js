@@ -27,7 +27,7 @@ const offers = [
 
 const seedDB = async () => {
   try {
-    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/fixora';
+    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/fixora';
     await mongoose.connect(MONGODB_URI);
     console.log('Connected to MongoDB for Seeding...');
 
@@ -39,8 +39,24 @@ const seedDB = async () => {
     await Service.insertMany(services);
     await Offer.insertMany(offers);
 
-    console.log('Database Seeded Successfully!');
-    process.exit();
+    // Seed Admin user if not exists
+    const adminExists = await User.findOne({ role: 'admin' });
+    if (!adminExists) {
+      await User.create({
+        name: 'Platform Admin',
+        email: 'admin@fixora.care',
+        password: 'adminpassword123',
+        phone: '+1 (800) 555-ADMIN',
+        role: 'admin',
+        address: '1 Fixora Executive Suite 10',
+        city: 'New York Metro',
+        verificationStatus: 'approved'
+      });
+      console.log('Default Admin Account Created: admin@fixora.care');
+    }
+
+    console.log('Database Seeded Successfully in MongoDB!');
+    process.exit(0);
   } catch (err) {
     console.error('Seeding error:', err);
     process.exit(1);
@@ -48,3 +64,4 @@ const seedDB = async () => {
 };
 
 seedDB();
+

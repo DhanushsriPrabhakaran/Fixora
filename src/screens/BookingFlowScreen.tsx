@@ -61,8 +61,8 @@ export const BookingFlowScreen: React.FC = () => {
   const additionalCharge = 415;
   const totalAmount = serviceCharge + additionalCharge;
 
-  const handleConfirmBooking = () => {
-    const bookingId = addBooking({
+  const handleConfirmBooking = async () => {
+    const bookingId = await addBooking({
       customerId: user?.id || 'cust_101',
       providerId: selectedProvider.id,
       serviceId: selectedService.id,

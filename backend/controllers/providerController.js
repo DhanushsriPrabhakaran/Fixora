@@ -1,5 +1,13 @@
 const Provider = require('../models/Provider');
 
+const formatProvider = (p) => {
+  const obj = p.toObject ? p.toObject() : p;
+  return {
+    ...obj,
+    id: obj._id ? obj._id.toString() : obj.id,
+  };
+};
+
 exports.getProviders = async (req, res) => {
   try {
     const { categoryType, search, verified } = req.query;
@@ -11,8 +19,9 @@ exports.getProviders = async (req, res) => {
       query.name = { $regex: search, $options: 'i' };
     }
 
-    const providers = await Provider.find(query);
-    res.json({ success: true, data: providers });
+    const providers = await Provider.find(query).sort({ createdAt: -1 });
+    const formatted = providers.map(formatProvider);
+    res.json({ success: true, data: formatted });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -20,11 +29,11 @@ exports.getProviders = async (req, res) => {
 
 exports.getProviderById = async (req, res) => {
   try {
-    const provider = await Provider.findById(req.params.id);
+    const provider = await Provider.findById(req.params.id) || await Provider.findOne({ userId: req.params.id });
     if (!provider) {
       return res.status(404).json({ success: false, message: 'Provider not found' });
     }
-    res.json({ success: true, data: provider });
+    res.json({ success: true, data: formatProvider(provider) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -33,7 +42,7 @@ exports.getProviderById = async (req, res) => {
 exports.submitVerification = async (req, res) => {
   try {
     const { providerId, idProof, certificationProof } = req.body;
-    const provider = await Provider.findById(providerId);
+    let provider = await Provider.findById(providerId) || await Provider.findOne({ userId: providerId });
 
     if (!provider) {
       return res.status(404).json({ success: false, message: 'Provider not found' });
@@ -46,7 +55,7 @@ exports.submitVerification = async (req, res) => {
     };
     await provider.save();
 
-    res.json({ success: true, message: 'Verification documents submitted successfully', data: provider });
+    res.json({ success: true, message: 'Verification documents submitted successfully', data: formatProvider(provider) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -55,7 +64,7 @@ exports.submitVerification = async (req, res) => {
 exports.addReview = async (req, res) => {
   try {
     const { providerId, rating, comment, serviceName, customerId, customerName } = req.body;
-    const provider = await Provider.findById(providerId);
+    let provider = await Provider.findById(providerId) || await Provider.findOne({ userId: providerId });
 
     if (!provider) {
       return res.status(404).json({ success: false, message: 'Provider not found' });
@@ -76,8 +85,9 @@ exports.addReview = async (req, res) => {
     provider.rating = Number((sum / provider.reviews.length).toFixed(1));
 
     await provider.save();
-    res.json({ success: true, data: provider });
+    res.json({ success: true, data: formatProvider(provider) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+

@@ -1,0 +1,5 @@
+$kind: collection
+name: TestApp API
+description: API collection for TestApp
+variables:
+  base_url: ""

@@ -97,7 +97,7 @@ In the current application architecture, data is managed and stored as follows:
 Stop-Process -Name node -Force
 adb kill-server
 
-emulator -avd Pixel_6     
+emulator -avd Pixel_4    
 adb emu kill
                 
 npm start

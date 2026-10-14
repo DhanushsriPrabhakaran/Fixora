@@ -12,6 +12,7 @@ export interface User {
   profileImage: string;
   city?: string;
   token?: string;
+  password?: string;
   verificationStatus?: VerificationStatus;
 }
 

@@ -4,12 +4,29 @@ const Notification = require('../models/Notification');
 exports.createBooking = async (req, res) => {
   try {
     const bookingData = req.body;
-    const bookingId = `FIX-${Math.floor(1000 + Math.random() * 9000)}`;
+    const bookingId = bookingData.id || `FIX-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const booking = await Booking.create({
-      ...bookingData,
       bookingId,
-      status: 'confirmed'
+      customerId: bookingData.customerId || 'cust_101',
+      providerId: bookingData.providerId || 'prv_101',
+      serviceId: bookingData.serviceId || 'srv_101',
+      serviceName: bookingData.serviceName || 'General Service',
+      providerName: bookingData.providerName || 'Certified Partner',
+      providerImage: bookingData.providerImage || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=300&q=80',
+      categoryType: bookingData.categoryType || 'home',
+      date: bookingData.date || bookingData.scheduledDate || new Date().toISOString().substring(0, 10),
+      timeSlot: bookingData.timeSlot || bookingData.scheduledTime || '10:00 AM',
+      address: bookingData.address || 'Customer Location',
+      landmark: bookingData.landmark || '',
+      status: bookingData.status || 'confirmed',
+      serviceCharge: bookingData.serviceCharge || bookingData.subtotalAmount || 50,
+      additionalCharge: bookingData.additionalCharge || 0,
+      discountAmount: bookingData.discountAmount || 0,
+      totalAmount: bookingData.totalAmount || 50,
+      paymentMethod: bookingData.paymentMethod || 'Credit / Debit Card',
+      paymentStatus: bookingData.paymentStatus || 'paid',
+      specialInstructions: bookingData.notes || bookingData.specialInstructions || '',
     });
 
     // Create notification
@@ -21,11 +38,17 @@ exports.createBooking = async (req, res) => {
       bookingId
     });
 
-    res.status(201).json({ success: true, data: booking });
+    const formatted = {
+      ...booking.toObject(),
+      id: booking.bookingId
+    };
+
+    res.status(201).json({ success: true, data: formatted });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 exports.getBookings = async (req, res) => {
   try {
